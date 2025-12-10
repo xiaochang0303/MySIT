@@ -11,9 +11,6 @@ Original resources
 - Paper: https://arxiv.org/pdf/2401.08740.pdf
 - Original code: https://github.com/willisma/SiT
 
-
-
-
 What is in this repository
 - `models.py`: PyTorch implementation of SiT (patchify, adaLN, blocks, final layer).
 - `train.py`: Training entrypoint (supports PyTorch DDP; designed for multi-GPU experiments).
@@ -38,10 +35,6 @@ Quick start — small training (single GPU / multi-GPU)
 ```bash
 torchrun --nnodes=1 --nproc_per_node=4 train.py --model SiT-XL/2 --data-path /path/to/data
 ```
-
-If you want help
-- I can adapt `sample.py` to reduce memory usage or add a tiny example dataset and a smoke-test script.
-- I can also add a short `USAGE.md` explaining how to load upstream checkpoints safely when `num_classes` differ.
 
 License
 - This repository includes the MIT license that came with the code. See `LICENSE.txt`.
