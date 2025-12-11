@@ -18,6 +18,7 @@ from torch.utils.data import DistributedSampler
 
 from torchvision.datasets import ImageFolder
 from torchvision import transforms
+from torchvision.utils import make_grid, save_image
 
 from models import SiT_models
 from controlnet_sit import ControlSiT
@@ -25,6 +26,7 @@ from loadmodel import find_model
 from diffusers.models import AutoencoderKL
 from transport import create_transport, Sampler
 from train_utils import parse_transport_args
+from maskdataset import ImageWithCanny, center_crop_arr
 
 # speed flags
 torch.backends.cuda.matmul.allow_tf32 = True
@@ -60,65 +62,6 @@ def create_logger(logging_dir):
         logger = logging.getLogger(__name__)
         logger.addHandler(logging.NullHandler())
     return logger
-
-def center_crop_arr(pil_image, image_size, crop_ratio=1.0):
-
-    while min(*pil_image.size) >= 2 * image_size:
-        pil_image = pil_image.resize(tuple(x // 2 for x in pil_image.size), resample=Image.BOX)
-    scale = image_size / min(*pil_image.size)
-    pil_image = pil_image.resize(tuple(round(x * scale) for x in pil_image.size), resample=Image.BICUBIC)
-    arr = np.array(pil_image)
-
-    # # 这里把原来的 image_size 变成了 crop_size
-    if isinstance(crop_ratio, float):
-        crop_ratio = crop_ratio
-    else:
-        crop_ratio = np.random.uniform(crop_ratio[0], crop_ratio[1])
-    crop_size = int(round(image_size * crop_ratio)) # 必须是整数
-    crop_y = (arr.shape[0] - crop_size) // 2
-    crop_x = (arr.shape[1] - crop_size) // 2
-    return Image.fromarray(arr[crop_y: crop_y + crop_size, crop_x: crop_x + crop_size])
-
-class ImageWithCanny(transforms.Compose):
-    # 1 usage
-    def __init__(self, image_size, low=100, high=200):
-        self.image_size = image_size
-        self.low = low
-        self.high = high
-        super().__init__([
-            transforms.Lambda(lambda pil: center_crop_arr(pil, image_size, crop_ratio=1.0)),
-            transforms.RandomHorizontalFlip(),
-        ])
-    
-    def __call__(self, img):
-        # Apply base transforms (crop/flip) deterministically to both views
-        img_t = super().__call__(img)
-        # Canny on grayscale numpy
-        np_img = np.array(img)
-        
-        if np_img.ndim == 3:
-            gray = (0.299 * np_img[..., 0] + 0.587 * np_img[..., 1] + 0.114 * np_img[..., 2]).astype(np.uint8)
-        else:
-            gray = np_img.astype(np.uint8)        
-        try:
-            import cv2
-            edges = cv2.Canny(gray, self.low, self.high)
-        except Exception:
-            # Fallback: simple Sobel magnitude threshold
-            gy = np.zeros_like(gray, dtype=np.float32)
-            gx = np.zeros_like(gray, dtype=np.float32)
-            gy[:, 1:-1] = gray[:, 2:] - gray[:, :-2]
-            gx[1:-1, :] = gray[2:, :] - gray[:-2, :]
-            
-            # Simple thresholding
-            edges = (np.hypot(gx, gy) > 64).astype(np.uint8) * 255
-
-        img_t = transforms.ToTensor()(img) # [0, 1]
-        img_t = transforms.Normalize([0.5, 0.5, 0.5], [0.5, 0.5, 0.5])(img_t) # [-1, 1]
-        
-        edge_t = torch.from_numpy(edges).float().unsqueeze(0) / 255.0 # [1, H, W]
-        
-        return img_t, edge_t
 
 # IMG_1519.JPG
 class FlatFolderDataset(Dataset):
@@ -180,10 +123,10 @@ def main(args):
     assert args.image_size % 8 == 0
     latent_size = args.image_size // 8
     base = SiT_models[args.model](input_size=latent_size, num_classes=args.num_classes)
-    from_ptrttrain = True # args.from_prttrain
+    from_pretrain = True  # args.from_pretrain
 
     # Load base checkpoint (required)
-    if from_ptrttrain:
+    if from_pretrain:
         assert args.ckpt is not None, "Please provide --ckpt of the pretrained SiT to build ControlNet on."
         state_dict = find_model(args.ckpt)
         
@@ -200,7 +143,7 @@ def main(args):
     control_model = ControlSiT(base, freeze_base=not args.unfreeze_base).to(device)
     ema = deepcopy(control_model).to(device)
     
-    if not from_ptrtrain:
+    if not from_pretrain:
         assert args.ckpt is not None, "Please provide --ckpt of the pretrained resume controlnet SiT."
         state_dict = find_model(args.ckpt)
         
@@ -283,7 +226,7 @@ def main(args):
             edge = edge.to(device) # [0, 1] shape [N, 1, H, W]
             y = y.to(device)
             
-            if args.fixed_class_id >= 0: # # 将训练模型中的类别标签固定
+            if args.fixed_class_id >= 0:  # 将训练模型中的类别标签固定
                 y = torch.full_like(y, args.fixed_class_id)
                 
             with torch.no_grad():
@@ -352,8 +295,7 @@ def main(args):
                     z=zs
                     if use_cfg:
                         z = torch.cat([z, z], dim=0)
-
-                        y_null = torch.tensor([args.num_classes] * n, device=device) # y_null 重复定义，可能是代码复制错误
+                        y_null = torch.tensor([args.num_classes] * n, device=device)
                         ys = torch.cat([ys, y_null], dim=0)
                         model_fn = ema.forward_with_cfg
                         model_kwargs = dict(y=ys, cfg_scale=args.cfg_scale)
@@ -375,22 +317,20 @@ def main(args):
                     
                     samples = vae.decode(samples / 0.18215).sample.clamp(-1, 1)
                     
-                    img_vis = (img.float().detach().cpu()+1)* 0.5 # N, 3, H, W in [0, 1]
-                    edge_vis = edge[0:n].float().detach().cpu() # N, 1, H, W in [0, 1]
-                    edge_vis = (edge_vis+1)*0.5# 灰度图转3通道
+                    img_vis = (img.float().detach().cpu() + 1) * 0.5  # N, 3, H, W in [0, 1]
+                    edge_vis = edge[0:n].float().detach().cpu()  # N, 1, H, W in [0, 1]
                     
-                    if edge_vis.shape[1] == 1: # 再次判断，可能为了兼容不同的 edge shape
+                    if edge_vis.shape[1] == 1:
                         edge_vis = edge_vis.repeat(1, 3, 1, 1)
                     
-                    gen_vis = (samples.float().detach().cpu()+1)*0.5# N, 3, H, W in [0, 1]
+                    gen_vis = (samples.float().detach().cpu() + 1) * 0.5  # N, 3, H, W in [0, 1][0, 1]
                 
-                    # # 拼接展示: 原始图 + 控制图 + 生成图
-                    n = len(img_vis) # n 已经定义
+                    # 拼接展示: 原始图 + 控制图 + 生成图
                     tiles = []
                     for i in range(n):
                         tiles.extend([img_vis[i], edge_vis[i], gen_vis[i]])
                         
-                    grid = make_grid(tiles, nrow=3*int(np.sqrt(n)), padding=2) # # 这里的 nrow 有问题，应该是 3
+                    grid = make_grid(tiles, nrow=3, padding=2)
                     
                     if dist.get_rank() == 0:
 
@@ -426,7 +366,7 @@ if __name__ == '__main__':
     parser.add_argument("--ckpt", type=str, required=True, help="Path to pretrained SiT checkpoint (.pt)")
     parser.add_argument("--canny-low", type=int, default=80)
     parser.add_argument("--canny-high", type=int, default=150)
-    parser.add_argument("--lr", type=float, default=1e-4) # 可能是拼写错误
+    parser.add_argument("--lr", type=float, default=1e-4)
     parser.add_argument("--unfreeze-base", action="store_true")
     parser.add_argument("--no-freeze-base", action="store_true") # not recommended
     parser.add_argument("--no-sample-control", action="store_true")
