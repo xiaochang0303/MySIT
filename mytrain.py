@@ -20,7 +20,7 @@ from torchvision.datasets import ImageFolder
 from torchvision import transforms
 
 from models import SiT_models
-from controlnet import ControlSiT
+from controlnet_sit import ControlSiT
 from loadmodel import find_model
 from diffusers.models import AutoencoderKL
 from transport import create_transport, Sampler
@@ -246,6 +246,8 @@ def main(args):
         dataset, batch_size=local_bs, shuffle=False, sampler=ddp_sampler, num_workers=args.num_workers,
         pin_memory=True, drop_last=True
     )
+
+    
     logger.info(f'Dataset contains {len(dataset)} images ({args.data_path}).')
     
     update_ema(ema, control_model, decay=0) # copy
@@ -314,11 +316,12 @@ def main(args):
             
             if train_steps % args.log_every == 0:
                 torch.cuda.synchronize()
-                end_time = time.time()
+                end_time = time()
                 
                 steps_per_sec = log_steps / (end_time - start_time)
                 
                 # All-reduce for average loss
+                avg_loss = torch.tensor(running_loss / log_steps, device=device)
                 dist.all_reduce(avg_loss, op=dist.ReduceOp.SUM)
                 avg_loss = avg_loss.item() / dist.get_world_size()
                 
@@ -326,7 +329,7 @@ def main(args):
                 
                 running_loss = 0.0
                 log_steps = 0
-                start_time = time.time()
+                start_time = time()
             
             if train_steps % args.ckpt_every == 0 and train_steps > 0:
                 if rank == 0:
@@ -342,12 +345,96 @@ def main(args):
                 dist.barrier()
                 
             if train_steps % args.sample_every == 0 and train_steps > 0:
-                if rank == 0:
-                    logger.info("Generating EMA samples (with control)...")
-                    with torch.no_grad():
-                        sampler_ode = sampler.sample_ode(
-                            ys_sample,
-                            z=zs,
-                            use_cfg=use_cfg,
-                            y_null = torch.tensor([args.num_classes] * n, dim=0, device=device)
-                        )
+                logger.info("Generating EMA samples (with control)...")
+                with torch.no_grad():
+                    sample_fn = sampler.sample_ode()
+                    ys = ys_sample
+                    z=zs
+                    if use_cfg:
+                        z = torch.cat([z, z], dim=0)
+
+                        y_null = torch.tensor([args.num_classes] * n, device=device) # y_null 重复定义，可能是代码复制错误
+                        ys = torch.cat([ys, y_null], dim=0)
+                        model_fn = ema.forward_with_cfg
+                        model_kwargs = dict(y=ys, cfg_scale=args.cfg_scale)
+                    else:
+                        model_fn = ema.forward
+                        model_kwargs = dict(y=ys)
+
+                    
+                    if args.no_sample_control:
+                        ctrl_latents = None
+                    else:
+                        ctrl_latents = ctrl[0:len(z)]
+                        
+                    samples = sample_fn(z, model_fn, control=ctrl_latents, **model_kwargs)[-1]
+                    dist.barrier()
+                    
+                    if use_cfg:
+                        samples, _ = samples.chunk(2, dim=0)
+                    
+                    samples = vae.decode(samples / 0.18215).sample.clamp(-1, 1)
+                    
+                    img_vis = (img.float().detach().cpu()+1)* 0.5 # N, 3, H, W in [0, 1]
+                    edge_vis = edge[0:n].float().detach().cpu() # N, 1, H, W in [0, 1]
+                    edge_vis = (edge_vis+1)*0.5# 灰度图转3通道
+                    
+                    if edge_vis.shape[1] == 1: # 再次判断，可能为了兼容不同的 edge shape
+                        edge_vis = edge_vis.repeat(1, 3, 1, 1)
+                    
+                    gen_vis = (samples.float().detach().cpu()+1)*0.5# N, 3, H, W in [0, 1]
+                
+                    # # 拼接展示: 原始图 + 控制图 + 生成图
+                    n = len(img_vis) # n 已经定义
+                    tiles = []
+                    for i in range(n):
+                        tiles.extend([img_vis[i], edge_vis[i], gen_vis[i]])
+                        
+                    grid = make_grid(tiles, nrow=3*int(np.sqrt(n)), padding=2) # # 这里的 nrow 有问题，应该是 3
+                    
+                    if dist.get_rank() == 0:
+
+                        out_png = os.path.join(ckpt_dir, f'step_{train_steps:07d}.png')
+                        save_image(grid, out_png)
+                    
+                logger.info("Sampling done.")
+        
+    control_model.eval()
+    logger.info('Done!')
+    cleanup()
+
+    
+if __name__ == '__main__':
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--data-path", type=str, required=True)
+    parser.add_argument("--results-dir", type=str, default="results")
+    parser.add_argument("--model", type=str, choices=list(SiT_models.keys()), default="SiT-XL/2")
+    parser.add_argument("--image-size", type=int, choices=[256, 512], default=256)
+    parser.add_argument("--num-classes", type=int, default=1000)
+    parser.add_argument("--epochs", type=int, default=1000) # typically fewer epochs for control finetune
+    
+    parser.add_argument("--global-batch-size", type=int, default=128)
+    parser.add_argument("--global-seed", type=int, default=0)
+    parser.add_argument("--num-workers", type=int, default=0)
+    parser.add_argument("--vae", type=str, choices=["mse", "ema"], default="ema")
+    parser.add_argument("--log-every", type=int, default=50)
+    parser.add_argument("--ckpt-every", type=int, default=5000)
+    parser.add_argument("--sample-every", type=int, default=500)
+    parser.add_argument("--cfg-scale", type=float, default=4.0)
+
+   # Control-specific args
+    parser.add_argument("--ckpt", type=str, required=True, help="Path to pretrained SiT checkpoint (.pt)")
+    parser.add_argument("--canny-low", type=int, default=80)
+    parser.add_argument("--canny-high", type=int, default=150)
+    parser.add_argument("--lr", type=float, default=1e-4) # 可能是拼写错误
+    parser.add_argument("--unfreeze-base", action="store_true")
+    parser.add_argument("--no-freeze-base", action="store_true") # not recommended
+    parser.add_argument("--no-sample-control", action="store_true")
+        
+    # Single-class convenience
+    parser.add_argument("--fixed-class-id", type=int, default=-1)
+    parser.add_argument("--single-folder", action="store_true")
+
+    parse_transport_args(parser)
+    args = parser.parse_args()
+    main(args)
