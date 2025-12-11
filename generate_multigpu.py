@@ -30,7 +30,7 @@ class FlatFolderDataset(Dataset):
     def __init__(self, root, transform=None):
         self.paths = []
         for ext in ['*.png', '*.jpg', '*.jpeg', '*.bmp', '*.webp']:
-            self.paths.extend(glob(os.path.join(root, ext)))
+            self.paths.extend(glob.glob(os.path.join(root, ext)))
         self.transform = transform
     
     def __len__(self):
@@ -45,7 +45,18 @@ class FlatFolderDataset(Dataset):
         else:
             img, edge = img, None
         
-        return (img, edge), 0
+        # 返回文件名（不包含路径和扩展名）
+        filename = os.path.splitext(os.path.basename(path))[0]
+        return (img, edge), 0, filename
+
+class ImageFolderWithFilename(ImageFolder):
+    """ImageFolder的包装类，返回文件名"""
+    def __getitem__(self, idx):
+        (img, edge), label = super().__getitem__(idx)
+        # 获取文件路径
+        path, _ = self.samples[idx]
+        filename = os.path.splitext(os.path.basename(path))[0]
+        return (img, edge), label, filename
 
 def cleanup():
     """清理分布式进程组"""
@@ -130,7 +141,7 @@ def main(args):
         if args.single_folder:
             dataset = FlatFolderDataset(args.data_path, transform=transform)
         else:
-            dataset = ImageFolder(args.data_path, transform=transform)
+            dataset = ImageFolderWithFilename(args.data_path, transform=transform)
     
     # if args.control_type == 'sobel':
     #     # TODO: 实现 sobel transform 和相应的 dataset
@@ -165,7 +176,14 @@ def main(args):
     cnt = 0
     start_time = time.time()
     
-    for i, ((img, edge), y) in enumerate(loader):
+    for i, batch_data in enumerate(loader):
+        # 处理不同数据集的返回格式
+        if len(batch_data) == 3:
+            (img, edge), y, filenames = batch_data
+        else:
+            (img, edge), y = batch_data
+            filenames = [f"sample_{cnt + j:05d}" for j in range(len(y))]
+        
         img = img.to(device)
         edge = edge.to(device)
         y = y.to(device)
@@ -235,18 +253,33 @@ def main(args):
             gen_vis = (samples.float().detach().cpu() + 1) * 0.5
             
             for j in range(n):
-                # 获取当前样本的类别标签
+                # 获取当前样本的类别标签和文件名
                 class_id = y[j].item()
+                if isinstance(filenames, list):
+                    filename = filenames[j]
+                else:
+                    filename = filenames[j] if j < len(filenames) else f"sample_{cnt:05d}"
                 
-                # 为每个类别创建子文件夹
+                # 为每个类别创建主文件夹和三个子文件夹
                 class_dir = os.path.join(args.results_dir, f"class_{class_id}")
-                os.makedirs(class_dir, exist_ok=True)
+                origin_dir = os.path.join(class_dir, "origin")
+                control_dir = os.path.join(class_dir, "control")
+                gen_dir = os.path.join(class_dir, "gen")
                 
-                # Save grid: Original | Edge | Generated
+                os.makedirs(origin_dir, exist_ok=True)
+                os.makedirs(control_dir, exist_ok=True)
+                os.makedirs(gen_dir, exist_ok=True)
+                
+                # 保存拼接后的图片（原有功能）
                 grid = make_grid([img_vis[j], edge_vis[j], gen_vis[j]], nrow=3, padding=2)
-                # 使用全局计数器加上rank偏移，避免文件名冲突
-                save_path = os.path.join(class_dir, f"sample_rank{rank}_{cnt:05d}.png")
-                save_image(grid, save_path)
+                grid_path = os.path.join(class_dir, f"{filename}_rank{rank}.png")
+                save_image(grid, grid_path)
+                
+                # 分别保存单独的图片
+                save_image(img_vis[j], os.path.join(origin_dir, f"{filename}.png"))
+                save_image(edge_vis[j], os.path.join(control_dir, f"{filename}.png"))
+                save_image(gen_vis[j], os.path.join(gen_dir, f"{filename}.png"))
+                
                 cnt += 1
         
         if rank == 0 and (i + 1) % 10 == 0:

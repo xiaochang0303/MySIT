@@ -238,6 +238,9 @@ class PairedLayeredDataset(Dataset):
         if self.transform is not None:
             img, mask = self.transform(img, mask)
        
-        # 返回 ((img, mask), label)
+        # 4. 获取文件名（不包含路径和扩展名）
+        filename = os.path.splitext(os.path.basename(img_path))[0]
+       
+        # 返回 ((img, mask), label, filename)
         # 这里的 label 就是根据 data1/data2 对应的 0, 1, 2...
-        return (img, mask), label
+        return (img, mask), label, filename
