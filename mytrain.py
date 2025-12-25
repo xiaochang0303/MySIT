@@ -21,7 +21,7 @@ from torchvision import transforms
 
 from models import SiT_models
 from controlnet import ControlSiT
-from loadmodel import find_model
+from download import find_model
 from diffusers.models import AutoencoderKL
 from transport import create_transport, Sampler
 from train_utils import parse_transport_args
