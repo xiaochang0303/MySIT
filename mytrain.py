@@ -15,10 +15,9 @@ import torch.distributed as dist
 from torch.nn.parallel import DistributedDataParallel as DDP
 from torch.utils.data import DataLoader, Dataset
 from torch.utils.data import DistributedSampler
-
+from torchvision.utils import make_grid, save_image
 from torchvision.datasets import ImageFolder
 from torchvision import transforms
-from torchvision.utils import make_grid, save_image
 
 from models import SiT_models
 from controlnet_sit import ControlSiT
@@ -26,13 +25,13 @@ from loadmodel import find_model
 from diffusers.models import AutoencoderKL
 from transport import create_transport, Sampler
 from train_utils import parse_transport_args
-from maskdataset import ImageWithCanny, center_crop_arr
+from maskdataset import PairedLayeredDataset, PairedTransform
 
 # speed flags
 torch.backends.cuda.matmul.allow_tf32 = True
 torch.backends.cudnn.allow_tf32 = True
 
-@torch.no_grad() # 2 usages
+@torch.no_grad()
 def update_ema(ema_model, model, decay=0.99):
     ema_params = OrderedDict(ema_model.named_parameters())
     model_params = OrderedDict(model.named_parameters())
@@ -40,20 +39,17 @@ def update_ema(ema_model, model, decay=0.99):
         ema_params[name].mul_(decay).add_(param.data, alpha=1 - decay)
 
 def requires_grad(model, flag=True):
-# IMG_1517.JPG
     for p in model.parameters():
         p.requires_grad = flag
 
 def cleanup():
-    # 1 usage
     dist.destroy_process_group()
 
 def create_logger(logging_dir):
-    # 2 usages
     if dist.get_rank() == 0:
         logging.basicConfig(
             level=logging.INFO,
-            format=f'[%(levelname)s %(asctime)s] %(message)s',
+            format=f'[\x1b[34m%%(asctime)s]\x1b[0m] %(message)s',
             datefmt='%Y-%m-%d %H:%M:%S',
             handlers=[logging.StreamHandler(), logging.FileHandler(f'{logging_dir}/log.txt')]
         )
@@ -63,9 +59,7 @@ def create_logger(logging_dir):
         logger.addHandler(logging.NullHandler())
     return logger
 
-# IMG_1519.JPG
 class FlatFolderDataset(Dataset):
-    # 1 usage
     def __init__(self, root, transform=None):
         self.paths = []
         for ext in ['*.png', '*.jpg', '*.jpeg', '*.bmp', '*.webp']:
@@ -73,11 +67,9 @@ class FlatFolderDataset(Dataset):
         self.transform = transform
     
     def __len__(self):
-        # 0 usages
         return len(self.paths)
         
     def __getitem__(self, idx):
-        # 0 usages
         path = self.paths[idx]
         img = Image.open(path).convert('RGB')
         
@@ -86,9 +78,8 @@ class FlatFolderDataset(Dataset):
         else:
             img, edge = img, None
         
-        return (img, edge), 0 # img, edge, # y=0 (will be overridden if --fixed-class-id=0)
-
-# IMG_1519.JPG
+        return (img, edge), 0 
+    
 def main(args):
     assert torch.cuda.is_available(), 'Training currently requires at least one GPU.'
 
@@ -108,7 +99,7 @@ def main(args):
         os.makedirs(args.results_dir, exist_ok=True)
         experiment_index = len(glob(f'{args.results_dir}/*'))
         model_string_name = args.model.replace('/', '-')
-        experiment_name = f'{experiment_index:030}-controlSiT-{model_string_name}-edges'
+        experiment_name = f'{experiment_index:03d}-controlSiT-{model_string_name}-edges'
         experiment_dir = f'{args.results_dir}/{experiment_name}'
         ckpt_dir = f'{experiment_dir}/checkpoints'
         os.makedirs(ckpt_dir, exist_ok=True)
@@ -155,7 +146,7 @@ def main(args):
     if args.unfreeze_base:
         params = control_model.parameters()
     else:
-        params = [p for p in control_model.model.parameters() if p.requires_grad]
+        params =(p for p in control_model.model.parameters() if p.requires_grad)
     opt = torch.optim.AdamW(params, lr=args.lr, weight_decay=0)
     
     # # Transport / sampler
@@ -175,11 +166,14 @@ def main(args):
     logger.info(f"SiT Parameters (trainable): {sum(p.numel() for p in control_model.parameters() if p.requires_grad):,}")
     
     # Data
-    transform = ImageWithCanny(args.image_size, args.canny_low, args.canny_high)
+    # transform = ImageWithCanny(args.image_size, args.canny_low, args.canny_high)
+    transform = PairedTransform(args.image_size,is_training=args.is_training)
+
     if args.single_folder:
         dataset = FlatFolderDataset(args.data_path, transform=transform)
     else:
-        dataset = ImageFolder(args.data_path, transform=transform)
+        # dataset = ImageFolder(args.data_path, transform=transform)
+        dataset = PairedLayeredDataset(args.data_path, transform=transform)
     
     ddp_sampler = DistributedSampler(
         dataset, num_replicas=dist.get_world_size(), rank=rank, shuffle=True, seed=args.global_seed
@@ -210,7 +204,7 @@ def main(args):
     else:
         ys_sample = torch.randint(args.num_classes, size=(n,), device=device)
     
-    zs = torch.randn(n, latent_size, latent_size, device=device)
+    zs = torch.randn(n, 4, latent_size, latent_size, device=device)
     
     control_model = DDP(control_model, device_ids=[rank])
     
@@ -222,8 +216,8 @@ def main(args):
         
         logger.info(f'Beginning epoch {epoch}...')
         for (img, edge), y in loader:
-            img = img.to(device) # [-1, 1]
-            edge = edge.to(device) # [0, 1] shape [N, 1, H, W]
+            img = img.to(device)
+            edge = edge.to(device)
             y = y.to(device)
             
             if args.fixed_class_id >= 0:  # 将训练模型中的类别标签固定
@@ -282,7 +276,7 @@ def main(args):
                         "opt": opt.state_dict(),
                         "args": args,
                     }
-                    ckpt_path = f'{ckpt_dir}/train_steps:{train_steps:07d}.pt'
+                    ckpt_path = f'{ckpt_dir}/{train_steps:07d}.pt'
                     torch.save(checkpoint, ckpt_path)
                     logger.info(f"Saved checkpoint to {ckpt_path}")
                 dist.barrier()
@@ -317,20 +311,22 @@ def main(args):
                     
                     samples = vae.decode(samples / 0.18215).sample.clamp(-1, 1)
                     
-                    img_vis = (img.float().detach().cpu() + 1) * 0.5  # N, 3, H, W in [0, 1]
-                    edge_vis = edge[0:n].float().detach().cpu()  # N, 1, H, W in [0, 1]
+                    img_vis = (img.float().detach().cpu()+1)* 0.5 # N, 3, H, W in [0, 1]
+                    edge_vis = edge.float().detach().cpu() # N, 1, H, W in [0, 1]
+                    edge_vis = (edge_vis+1)*0.5# 灰度图转3通道
                     
                     if edge_vis.shape[1] == 1:
                         edge_vis = edge_vis.repeat(1, 3, 1, 1)
                     
                     gen_vis = (samples.float().detach().cpu() + 1) * 0.5  # N, 3, H, W in [0, 1][0, 1]
                 
-                    # 拼接展示: 原始图 + 控制图 + 生成图
+                    # # 拼接展示: 原始图 + 控制图 + 生成图
+                    n = len(img_vis) # n 已经定义
                     tiles = []
                     for i in range(n):
                         tiles.extend([img_vis[i], edge_vis[i], gen_vis[i]])
                         
-                    grid = make_grid(tiles, nrow=3, padding=2)
+                    grid = make_grid(tiles, nrow=3*int(np.sqrt(n)), padding=2) # # 这里的 nrow 有问题，应该是 3
                     
                     if dist.get_rank() == 0:
 
@@ -364,16 +360,15 @@ if __name__ == '__main__':
 
    # Control-specific args
     parser.add_argument("--ckpt", type=str, required=True, help="Path to pretrained SiT checkpoint (.pt)")
-    parser.add_argument("--canny-low", type=int, default=80)
-    parser.add_argument("--canny-high", type=int, default=150)
-    parser.add_argument("--lr", type=float, default=1e-4)
-    parser.add_argument("--unfreeze-base", action="store_true")
-    parser.add_argument("--no-freeze-base", action="store_true") # not recommended
-    parser.add_argument("--no-sample-control", action="store_true")
-        
+    parser.add_argument("--canny-low", type=int, default=30)
+    parser.add_argument("--canny-high", type=int, default=80)
+    parser.add_argument("--lr", type=float, default=1e-4) 
+    parser.add_argument("--unfreeze-base", action="store_true", help="Whether to unfreeze the base SiT model for training.")
+    parser.add_argument("--no-sample-control", action="store_true",help="Whether to disable control signals during sampling (for ablation).")
+    parser.add_argument("--is-training", type=bool, help="Whether in training mode (enables data augmentation).") 
     # Single-class convenience
-    parser.add_argument("--fixed-class-id", type=int, default=-1)
-    parser.add_argument("--single-folder", action="store_true")
+    parser.add_argument("--fixed-class-id", type=int, default=-1,help="If >=0, use this class ID for all training samples.")
+    parser.add_argument("--single-folder", action="store_true", help="Whether to use a single folder of images instead of ImageFolder structure.")
 
     parse_transport_args(parser)
     args = parser.parse_args()
