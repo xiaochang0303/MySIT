@@ -3,7 +3,7 @@ import os
 import argparse
 import logging
 from glob import glob
-import time
+from time import time
 from copy import deepcopy
 from collections import OrderedDict
 
@@ -146,7 +146,7 @@ def main(args):
     if args.unfreeze_base:
         params = control_model.parameters()
     else:
-        params =(p for p in control_model.model.parameters() if p.requires_grad)
+        params =(p for p in control_model.parameters() if p.requires_grad)
     opt = torch.optim.AdamW(params, lr=args.lr, weight_decay=0)
     
     # # Transport / sampler
