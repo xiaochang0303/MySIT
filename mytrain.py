@@ -2,7 +2,7 @@
 import os
 import argparse
 import logging
-import glob
+from glob import glob
 import time
 from copy import deepcopy
 from collections import OrderedDict
