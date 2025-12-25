@@ -53,7 +53,7 @@ class ImageWithCanny(transforms.Compose):
             - img_tensor: 归一化到 [-1, 1] 的图像 tensor
             - edge_tensor: [0, 1] 范围的边缘 tensor
     """
-    def __init__(self, image_size, low=100, high=200, is_training=True):
+    def __init__(self, image_size, is_training, low=100, high=200):
         self.image_size = image_size
         self.low = low
         self.high = high
@@ -80,10 +80,10 @@ class ImageWithCanny(transforms.Compose):
             edges = cv2.Canny(gray, self.low, self.high)
         except Exception:
             # Fallback: simple Sobel magnitude threshold
-            gy = np.zeros_like(gray, dtype=np.float32)
             gx = np.zeros_like(gray, dtype=np.float32)
-            gy[:, 1:-1] = gray[:, 2:] - gray[:, :-2]
-            gx[1:-1, :] = gray[2:, :] - gray[:-2, :]
+            gy = np.zeros_like(gray, dtype=np.float32)
+            gx[:, 1:-1] = gray[:, 2:] - gray[:, :-2]
+            gy[1:-1, :] = gray[2:, :] - gray[:-2, :]
             edges = (np.hypot(gx, gy) > 64).astype(np.uint8) * 255
 
         img_t = transforms.ToTensor()(img)  # [0, 1]
@@ -95,7 +95,7 @@ class ImageWithCanny(transforms.Compose):
 
 
 class PairedTransform:
-    def __init__(self, image_size, is_training=True):
+    def __init__(self, image_size, is_training):
         self.image_size = image_size
         self.is_training = is_training
    

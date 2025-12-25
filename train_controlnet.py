@@ -27,6 +27,7 @@ from controlnet_sit import ControlNetSiT
 from download import find_model
 from transport import create_transport, Sampler
 from diffusers.models import AutoencoderKL
+from maskdataset import PairedLayeredDataset, PairedTransform
 import wandb_utils
 
 #################################################################################

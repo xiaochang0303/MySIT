@@ -7,7 +7,7 @@ from collections import OrderedDict
 
 import numpy as np
 from PIL import Image
-
+from download import find_model
 import torch
 import torch.distributed as dist
 from torch.utils.data import DataLoader, Dataset
@@ -17,7 +17,7 @@ from torchvision import transforms
 from torchvision.utils import make_grid, save_image
 
 from models import SiT_models
-from controlnet_sit import ControlSiT
+from controlnet import ControlSiT
 from diffusers.models import AutoencoderKL
 from transport import create_transport, Sampler
 from train_utils import parse_transport_args
@@ -103,8 +103,10 @@ def main(args):
     # Load Checkpoint
     if rank == 0:
         print(f"Loading checkpoint from {args.ckpt}...")
-    checkpoint = torch.load(args.ckpt, map_location=device)
-    
+
+    # checkpoint = torch.load(args.ckpt, map_location=device)
+    checkpoint = find_model(args.ckpt)
+
     if "ema" in checkpoint:
         control_model.load_state_dict(checkpoint["ema"])
     elif "model" in checkpoint:
@@ -130,14 +132,14 @@ def main(args):
     
     # Data - 根据 control_type 选择不同的 transform 和 dataset
     if args.control_type == 'mask':
-        transform = PairedTransform(args.image_size, is_training=False)
+        transform = PairedTransform(args.image_size, is_training=args.is_training)
         if args.single_folder:
             dataset = FlatFolderDataset(args.data_path, transform=transform)
         else:
             dataset = PairedLayeredDataset(args.data_path, transform=transform)
     
     if args.control_type == 'canny':
-        transform = ImageWithCanny(args.image_size, args.canny_low, args.canny_high, is_training=False)
+        transform = ImageWithCanny(args.image_size, args.canny_low, args.canny_high, is_training=args.is_training)
         if args.single_folder:
             dataset = FlatFolderDataset(args.data_path, transform=transform)
         else:
@@ -205,7 +207,7 @@ def main(args):
             ctrl = vae.encode(edge_rgb).latent_dist.sample().mul_(0.18215)
             
             # 2. Prepare Latents z
-            z = torch.randn(n, latent_size, latent_size, device=device)
+            z = torch.randn(n, 4, latent_size, latent_size, device=device)
             
             # 3. Setup Classifier-Free Guidance
             use_cfg = args.cfg_scale > 1.0
@@ -322,7 +324,9 @@ if __name__ == '__main__':
     parser.add_argument("--canny-low", type=int, default=80)
     parser.add_argument("--canny-high", type=int, default=150)
     parser.add_argument("--no-sample-control", action="store_true")
-        
+    
+    parser.add_argument("--is-training", type=bool, help="Whether in training mode (enables data augmentation).") 
+
     # Single-class convenience
     parser.add_argument("--fixed-class-id", type=int, default=-1)
     parser.add_argument("--single-folder", action="store_true")
