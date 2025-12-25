@@ -215,7 +215,7 @@ def main(args):
         ddp_sampler.set_epoch(epoch)
         
         logger.info(f'Beginning epoch {epoch}...')
-        for (img, edge), y in loader:
+        for (img, edge), y, _ in loader:
             img = img.to(device)
             edge = edge.to(device)
             y = y.to(device)
