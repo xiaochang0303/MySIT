@@ -285,7 +285,7 @@ def main(args):
                 logger.info("Generating EMA samples (with control)...")
                 with torch.no_grad():
                     sample_fn = sampler.sample_ode()
-                    ys = ys_sample
+                    ys = y
                     z=zs
                     if use_cfg:
                         z = torch.cat([z, z], dim=0)
