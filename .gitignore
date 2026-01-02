@@ -5,3 +5,13 @@ wandb
 samples
 results
 pretrained_models
+uv.lock
+
+# VAE parameters
+sd-vae-ft-*/
+sd-vae-ft-ema/
+sd-vae-ft-mse/
+
+# Data directory
+Data/
+data/
