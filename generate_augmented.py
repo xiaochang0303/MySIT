@@ -86,7 +86,7 @@ def load_masks(mask_dir, image_size):
 
 
 def main(args):
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    device = torch.device("cuda" if torch.cuda.is_available() or torch.backends.mps.is_available() else "cpu")
     print(f"Using device: {device}")
     
     # 加载模型
