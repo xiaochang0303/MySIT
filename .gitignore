@@ -36,3 +36,4 @@ checkpoints/
 
 # Logs
 *.log
+.mailmap
