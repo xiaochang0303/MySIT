@@ -50,7 +50,7 @@ from models import inject_lora, get_lora_parameters, count_lora_parameters
 from utils import find_model
 from diffusers.models import AutoencoderKL
 from transport import create_transport, Sampler
-from training.train_utils import parse_transport_args
+from training.train_utils import parse_transport_args, log_training_config
 from datasets import PairedLayeredDataset, PairedFlatDataset, PairedTransform
 
 torch.backends.cuda.matmul.allow_tf32 = True
@@ -265,7 +265,7 @@ def main(args):
 
     if rank == 0:
         logger.info(f"Experiment: {experiment_dir}")
-        logger.info(f"Args: {args}")
+        log_training_config(logger, args, title="Few-Shot Training Configuration")
 
     # 构建模型
     latent_size = args.image_size // 8

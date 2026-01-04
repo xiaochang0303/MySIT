@@ -26,7 +26,7 @@ from utils import find_model
 import utils.wandb_utils as wandb_utils
 from diffusers.models import AutoencoderKL
 from transport import create_transport, Sampler
-from training.train_utils import parse_transport_args
+from training.train_utils import parse_transport_args, log_training_config
 from datasets import PairedLayeredDataset, PairedTransform
 
 # speed flags
@@ -107,6 +107,7 @@ def main(args):
         os.makedirs(ckpt_dir, exist_ok=True)
         logger = create_logger(experiment_dir)
         logger.info(f'Experiment dir: {experiment_dir}')
+        log_training_config(logger, args, title="ControlNet Training Configuration")
         if args.wandb:
             entity = os.environ["ENTITY"]
             project = os.environ["PROJECT"]
