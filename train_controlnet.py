@@ -119,12 +119,14 @@ def main(args):
     assert args.image_size % 8 == 0
     latent_size = args.image_size // 8
     base = SiT_models[args.model](input_size=latent_size, num_classes=args.num_classes)
-    # from_pretrain = True  # default path: requires --ckpt
-    from_pretrain = False  # TEMP: allow init from scratch without ckpt
+    from_pretrain = True  # default path: requires --ckpt
+    # from_pretrain = False  # TEMP: allow init from scratch without ckpt
 
     # Load base checkpoint (required)
     if from_pretrain:
-        # assert args.ckpt is not None, "Please provide --ckpt of the pretrained SiT to build ControlNet on."
+
+        assert args.ckpt is not None, "Please provide --ckpt of the pretrained SiT to build ControlNet on."
+        
         state_dict = find_model(args.ckpt)
         
         del state_dict['ema']['y_embedder.embedding_table.weight']
@@ -140,11 +142,11 @@ def main(args):
     control_model = ControlSiT(base, freeze_base=not args.unfreeze_base).to(device)
     ema = deepcopy(control_model).to(device)
     
-    # if not from_pretrain:
-    #     assert args.ckpt is not None, "Please provide --ckpt of the pretrained resume controlnet SiT."
-    #     state_dict = find_model(args.ckpt)
-    #     control_model.load_state_dict(state_dict["model"])
-    #     ema.load_state_dict(state_dict["ema"])
+    if not from_pretrain:
+        assert args.ckpt is not None, "Please provide --ckpt of the pretrained resume controlnet SiT."
+        state_dict = find_model(args.ckpt)
+        control_model.load_state_dict(state_dict["model"])
+        ema.load_state_dict(state_dict["ema"])
     
     requires_grad(ema, flag=False)
     
