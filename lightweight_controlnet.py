@@ -179,8 +179,9 @@ class LightweightAdapter(nn.Module):
         # 独立块的残差
         if self.independent_blocks is not None:
             for block in self.independent_blocks:
-                h = h + block(h) * 0.1  # 残差连接
-                residuals.append(block(h))
+                out = block(h)
+                h = h + out * 0.1  # 残差连接
+                residuals.append(out)
                 
         # 应用层级权重
         weights = torch.sigmoid(self.layer_weights)
@@ -205,20 +206,23 @@ def _infer_img_size(base: SiT) -> Tuple[int, int]:
 class LightweightControlSiT(nn.Module):
     """
     轻量级 ControlSiT
-    
+
     相比原版 ControlSiT 的改进:
     1. 使用低秩投影减少参数
     2. 部分层共享权重
     3. 可学习的层级权重
     4. 支持控制强度调节
     5. 训练时可选噪声注入增强多样性
-    
+
     Args:
         base: 预训练的 SiT 模型
         rank: 低秩投影的秩
         shared_depth: 共享权重的层数
         freeze_base: 是否冻结基座
         noise_scale: 训练时噪声注入强度
+        cfg_channels: CFG 应用的通道模式
+            - "first3": 仅对前3通道应用 CFG (与原始 SiT 一致，用于精确复现)
+            - "all": 对所有潜在通道应用 CFG (标准做法)
     """
     def __init__(
         self,
@@ -227,10 +231,12 @@ class LightweightControlSiT(nn.Module):
         shared_depth: int = 4,
         freeze_base: bool = True,
         noise_scale: float = 0.0,
+        cfg_channels: str = "first3",
     ):
         super().__init__()
         self.base = base
         self.noise_scale = noise_scale
+        self.cfg_channels = cfg_channels
         
         # 冻结基座
         if freeze_base:
@@ -357,7 +363,7 @@ class LightweightControlSiT(nn.Module):
         """带 Classifier-Free Guidance 的前向传播"""
         half = x[: len(x) // 2]
         combined = torch.cat([half, half], dim=0)
-        
+
         # 控制信号对齐
         ctrl_combined = None
         if control is not None:
@@ -366,19 +372,26 @@ class LightweightControlSiT(nn.Module):
             else:
                 ctrl_half = control[: len(x) // 2]
                 ctrl_combined = torch.cat([ctrl_half, ctrl_half], dim=0)
-                
+
         model_out = self.forward(
             combined, t, y,
             control=ctrl_combined,
             control_strength=control_strength,
         )
-        
-        # CFG 组合
-        eps, rest = model_out[:, :3], model_out[:, 3:]
+
+        # 根据 cfg_channels 选择 CFG 应用的通道
+        if self.cfg_channels == "all":
+            # 对所有潜在通道应用 CFG (标准做法)
+            cfg_ch = self.in_channels
+        else:
+            # 仅对前3通道应用 CFG (与原始 SiT 一致，用于精确复现)
+            cfg_ch = 3
+
+        eps, rest = model_out[:, :cfg_ch], model_out[:, cfg_ch:]
         cond_eps, uncond_eps = torch.split(eps, len(eps) // 2, dim=0)
         half_eps = uncond_eps + cfg_scale * (cond_eps - uncond_eps)
         eps = torch.cat([half_eps, half_eps], dim=0)
-        
+
         return torch.cat([eps, rest], dim=1)
     
     def get_trainable_parameters(self) -> List[nn.Parameter]:

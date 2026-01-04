@@ -38,43 +38,42 @@ def center_crop_arr(pil_image, image_size, crop_ratio=1.0):
     return Image.fromarray(arr[crop_y: crop_y + crop_size, crop_x: crop_x + crop_size])
 
 
-class ImageWithCanny(transforms.Compose):
+class ImageWithCanny:
     """
     Canny 边缘检测 transform，用于基于 Canny 边缘的控制信号生成
-    
+
     Args:
         image_size: 目标图像大小
         low: Canny 边缘检测的低阈值
         high: Canny 边缘检测的高阈值
         is_training: 是否为训练模式，训练模式下会进行数据增强（随机翻转）
-    
+
     Returns:
         tuple: (img_tensor, edge_tensor)
             - img_tensor: 归一化到 [-1, 1] 的图像 tensor
-            - edge_tensor: [0, 1] 范围的边缘 tensor
+            - edge_tensor: 归一化到 [-1, 1] 的边缘 tensor
     """
     def __init__(self, image_size, is_training, low=100, high=200):
         self.image_size = image_size
         self.low = low
         self.high = high
         self.is_training = is_training
-        
-        # 根据模式选择是否添加随机翻转
-        transform_list = [transforms.Lambda(lambda pil: center_crop_arr(pil, image_size, crop_ratio=1.0))]
-        if is_training:
-            transform_list.append(transforms.RandomHorizontalFlip())
-        
-        super().__init__(transform_list)
-    
+
     def __call__(self, img):
-        img_t = super().__call__(img)
+        # 1. 先做 center crop
+        img = center_crop_arr(img, self.image_size, crop_ratio=1.0)
+
+        # 2. 决定是否翻转（训练模式下随机）
+        do_flip = random.random() > 0.5 if self.is_training else False
+
+        # 3. 从处理后的图像提取 Canny 边缘（确保同步）
         np_img = np.array(img)
-        
+
         if np_img.ndim == 3:
             gray = (0.299 * np_img[..., 0] + 0.587 * np_img[..., 1] + 0.114 * np_img[..., 2]).astype(np.uint8)
         else:
             gray = np_img.astype(np.uint8)
-        
+
         try:
             import cv2
             edges = cv2.Canny(gray, self.low, self.high)
@@ -86,11 +85,19 @@ class ImageWithCanny(transforms.Compose):
             gy[1:-1, :] = gray[2:, :] - gray[:-2, :]
             edges = (np.hypot(gx, gy) > 64).astype(np.uint8) * 255
 
-        img_t = transforms.ToTensor()(img)  # [0, 1]
-        img_t = transforms.Normalize([0.5, 0.5, 0.5], [0.5, 0.5, 0.5])(img_t)  # [-1, 1]
-        
-        edge_t = torch.from_numpy(edges).float().unsqueeze(0) / 255.0  # [1, H, W]
-        
+        # 4. 转换为 tensor
+        img_t = TF.to_tensor(img)  # [0, 1]
+        edge_t = torch.from_numpy(edges).float().unsqueeze(0) / 255.0  # [0, 1]
+
+        # 5. 同步翻转
+        if do_flip:
+            img_t = TF.hflip(img_t)
+            edge_t = TF.hflip(edge_t)
+
+        # 6. 归一化到 [-1, 1]
+        img_t = TF.normalize(img_t, [0.5, 0.5, 0.5], [0.5, 0.5, 0.5])  # [-1, 1]
+        edge_t = edge_t * 2.0 - 1.0  # [-1, 1]
+
         return img_t, edge_t
 
 
@@ -166,9 +173,10 @@ class PairedTransform:
         mask = self.resize_and_pad(mask, self.image_size, is_mask=True)
         if do_flip: mask = TF.hflip(mask)
        
-        # ToTensor (将 255 变为 1.0)
-        mask_t = TF.to_tensor(mask)
-       
+        # ToTensor (将 255 变为 1.0) 并归一化到 [-1, 1]
+        mask_t = TF.to_tensor(mask)  # [0, 1]
+        mask_t = mask_t * 2.0 - 1.0  # [-1, 1]
+
         return img_t, mask_t
 
 

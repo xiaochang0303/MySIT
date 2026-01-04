@@ -174,7 +174,7 @@ def main(args):
     
     # Data
     # transform = ImageWithCanny(args.image_size, args.canny_low, args.canny_high)
-    transform = PairedTransform(args.image_size,is_training=args.is_training)
+    transform = PairedTransform(args.image_size, is_training=True)  # 训练脚本始终启用数据增强
 
     if args.single_folder:
         dataset = FlatFolderDataset(args.data_path, transform=transform)
@@ -380,8 +380,7 @@ if __name__ == '__main__':
     parser.add_argument("--canny-high", type=int, default=80)
     parser.add_argument("--lr", type=float, default=1e-4) 
     parser.add_argument("--unfreeze-base", action="store_true", help="Whether to unfreeze the base SiT model for training.")
-    parser.add_argument("--no-sample-control", action="store_true",help="Whether to disable control signals during sampling (for ablation).")
-    parser.add_argument("--is-training", type=bool, help="Whether in training mode (enables data augmentation).") 
+    parser.add_argument("--no-sample-control", action="store_true",help="Whether to disable control signals during sampling (for ablation).") 
     # Single-class convenience
     parser.add_argument("--fixed-class-id", type=int, default=-1,help="If >=0, use this class ID for all training samples.")
     parser.add_argument("--single-folder", action="store_true", help="Whether to use a single folder of images instead of ImageFolder structure.")

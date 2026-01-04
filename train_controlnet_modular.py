@@ -171,7 +171,7 @@ def apply_lora_if_requested(base, control_model, args, logger):
 
 def build_control_model(args, base, logger):
     if args.control_type == "controlnet":
-        control_model = ControlSiT(base, freeze_base=not args.unfreeze_base)
+        control_model = ControlSiT(base, freeze_base=not args.unfreeze_base, cfg_channels=args.cfg_channels)
     elif args.control_type == "lightweight":
         control_model = LightweightControlSiT(
             base,
@@ -179,6 +179,7 @@ def build_control_model(args, base, logger):
             shared_depth=args.light_shared_depth,
             freeze_base=not args.unfreeze_base,
             noise_scale=args.light_noise_scale,
+            cfg_channels=args.cfg_channels,
         )
     elif args.control_type == "none":
         control_model = base
@@ -254,7 +255,7 @@ def main(args):
     vae.eval()
 
     # Data
-    transform = PairedTransform(args.image_size, is_training=args.is_training)
+    transform = PairedTransform(args.image_size, is_training=True)  # 训练脚本始终启用数据增强
     if args.single_folder:
         dataset = FlatFolderDataset(args.data_path, transform=transform)
     else:
@@ -387,7 +388,9 @@ def main(args):
                     if args.no_sample_control:
                         ctrl_latents = None
                     else:
-                        ctrl_latents = ctrl[0:len(z)]
+                        # 当使用 CFG 时，control 需要复制以匹配 z 的维度
+                        # forward_with_cfg 内部会处理 control 的对齐，所以这里只需要传入原始 ctrl
+                        ctrl_latents = ctrl[:n]  # 使用当前 batch 的 control
 
                     samples = sample_fn(z, model_fn, control=ctrl_latents, **model_kwargs)[-1]
                     dist.barrier()
@@ -452,13 +455,16 @@ if __name__ == '__main__':
     parser.add_argument("--lr", type=float, default=1e-4)
     parser.add_argument("--unfreeze-base", action="store_true", help="Whether to unfreeze the base SiT model.")
     parser.add_argument("--no-sample-control", action="store_true", help="Disable control signals during sampling.")
-    parser.add_argument("--is-training", type=bool, help="Whether in training mode (enables data augmentation).")
     parser.add_argument("--single-folder", action="store_true")
 
     # Lightweight ControlNet options
     parser.add_argument("--light-rank", type=int, default=32)
     parser.add_argument("--light-shared-depth", type=int, default=4)
     parser.add_argument("--light-noise-scale", type=float, default=0.0)
+
+    # CFG options
+    parser.add_argument("--cfg-channels", type=str, choices=["first3", "all"], default="first3",
+                        help="CFG channel mode: 'first3' for original SiT behavior, 'all' for standard CFG on all latent channels.")
 
     # LoRA options
     parser.add_argument("--lora-rank", type=int, default=0)

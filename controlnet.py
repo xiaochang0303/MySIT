@@ -82,9 +82,18 @@ def _infer_img_size(base: SiT) -> Tuple[int, int]:
     return H, W
 
 class ControlSiT(nn.Module):
-    def __init__(self, base: SiT, freeze_base: bool = True):
+    def __init__(self, base: SiT, freeze_base: bool = True, cfg_channels: str = "first3"):
+        """
+        Args:
+            base: 预训练的 SiT 模型
+            freeze_base: 是否冻结基座模型
+            cfg_channels: CFG 应用的通道模式
+                - "first3": 仅对前3通道应用 CFG (与原始 SiT 一致，用于精确复现)
+                - "all": 对所有潜在通道应用 CFG (标准做法)
+        """
         super().__init__()
         self.base = base
+        self.cfg_channels = cfg_channels
         if freeze_base:
             for p in self.base.parameters():
                 p.requires_grad = False
@@ -114,34 +123,36 @@ class ControlSiT(nn.Module):
         y_emb = self.base.y_embedder(y, training)
         return t_emb + y_emb
 
-    def forward(self, x, t, y, control: Optional[torch.Tensor] = None):
+    def forward(self, x, t, y, control: Optional[torch.Tensor] = None, control_strength: float = 1.0):
         x_tokens = self.base.x_embedder(x) + self.base.pos_embed
         c = self._cond(t, y, self.training)
-        
+
         if control is not None:
             ctrl_tokens = self.control_embed(control) + self.base.pos_embed
             residuals = self.adapter(ctrl_tokens)
+            # 应用控制强度
+            residuals = [r * control_strength for r in residuals]
         else:
             residuals = [0.0] * len(self.base.blocks)
-            
+
         h = x_tokens
         for i, block in enumerate(self.base.blocks):
             r = residuals[i]
             # 如果是float(即0.0)，则不加；否则加上残差
             h = block(h if isinstance(r, float) else (h + r), c)
-            
+
         out = self.base.final_layer(h, c)
         out = self.base.unpatchify(out)
-        
+
         if self.base.learn_sigma:
             out, _ = out.chunk(2, dim=1)
         return out
 
-    def forward_with_cfg(self, x, t, y, cfg_scale, control: Optional[torch.Tensor] = None):
+    def forward_with_cfg(self, x, t, y, cfg_scale, control: Optional[torch.Tensor] = None, control_strength: float = 1.0):
         # 只计算一半的数据，然后做CFG组合
         half = x[: len(x) // 2]  # (N, 4, H, W)
         combined = torch.cat([half, half], dim=0)  # (2N, 4, H, W)
-        
+
         # 处理控制信号的维度对齐
         control_combined = None
         if control is not None:
@@ -151,11 +162,18 @@ class ControlSiT(nn.Module):
                 # 视为 (N, ...)，复制成 (2N, ...)
                 control_half = control[: len(x) // 2]
                 control_combined = torch.cat([control_half, control_half], dim=0)
-                
-        model_out = self.forward(combined, t, y, control=control_combined)
-        
-        # 仅对前3通道做CFG (与SiT原实现一致)
-        eps, rest = model_out[:, :3], model_out[:, 3:]
+
+        model_out = self.forward(combined, t, y, control=control_combined, control_strength=control_strength)
+
+        # 根据 cfg_channels 选择 CFG 应用的通道
+        if self.cfg_channels == "all":
+            # 对所有潜在通道应用 CFG (标准做法)
+            cfg_ch = self.in_channels
+        else:
+            # 仅对前3通道应用 CFG (与原始 SiT 一致，用于精确复现)
+            cfg_ch = 3
+
+        eps, rest = model_out[:, :cfg_ch], model_out[:, cfg_ch:]
         cond_eps, uncond_eps = torch.split(eps, len(eps) // 2, dim=0)
         half_eps = uncond_eps + cfg_scale * (cond_eps - uncond_eps)
         eps = torch.cat([half_eps, half_eps], dim=0)
