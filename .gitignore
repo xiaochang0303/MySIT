@@ -15,3 +15,23 @@ sd-vae-ft-mse/
 # Data directory
 Data/
 data/
+
+# Documentation (not needed for reproduction)
+CLAUDE.md
+CODE_REVIEW.md
+docs/
+
+# IDE and editor files
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Output and checkpoints
+outputs/
+checkpoints/
+*.pt
+*.pth
+
+# Logs
+*.log
