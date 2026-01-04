@@ -131,6 +131,8 @@ def main(args):
         state_dict = find_model(args.ckpt)
         
         del state_dict['ema']['y_embedder.embedding_table.weight']
+        if "pos_embed" in state_dict["ema"]:
+            del state_dict["ema"]["pos_embed"]
         missing, unexpected = base.load_state_dict(state_dict["ema"], strict=False)
         
         if len(missing) > 0:

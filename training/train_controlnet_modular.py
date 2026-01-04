@@ -123,6 +123,8 @@ def build_base_model(args, device, logger):
         if "ema" in state_dict:
             if "y_embedder.embedding_table.weight" in state_dict["ema"]:
                 del state_dict["ema"]["y_embedder.embedding_table.weight"]
+            if "pos_embed" in state_dict["ema"]:
+                del state_dict["ema"]["pos_embed"]
             missing, unexpected = base.load_state_dict(state_dict["ema"], strict=False)
             if missing:
                 logger.info(f"[INFO] missing keys: {len(missing)}")

@@ -15,6 +15,7 @@ sd-vae-ft-mse/
 # Data directory
 Data/
 data/
+sample_data/
 
 # Documentation (not needed for reproduction)
 CLAUDE.md

@@ -252,3 +252,98 @@ class PairedLayeredDataset(Dataset):
         # 返回 ((img, mask), label, filename)
         # 这里的 label 就是根据 data1/data2 对应的 0, 1, 2...
         return (img, mask), label, filename
+
+
+class PairedFlatDataset(Dataset):
+    """
+    扁平结构的配对数据集
+
+    适用于 images/ 和 masks/ 在同一目录下的结构:
+        root_dir/
+            images/
+                001.png
+                002.png
+            masks/
+                001.png
+                002.png
+
+    通过文件名匹配 image 和 mask (去除后缀后匹配)
+    """
+    def __init__(self, root_dir, transform=None, class_label=0,
+                 image_folder='images', mask_folder='masks'):
+        """
+        Args:
+            root_dir: 数据集根目录
+            transform: 同步的数据增强 transform
+            class_label: 所有样本的类别标签 (单类别数据集)
+            image_folder: 图像文件夹名
+            mask_folder: mask 文件夹名
+        """
+        super().__init__()
+        self.root_dir = root_dir
+        self.transform = transform
+        self.class_label = class_label
+        self.samples = []
+
+        img_dir = os.path.join(root_dir, image_folder)
+        mask_dir = os.path.join(root_dir, mask_folder)
+
+        if not os.path.exists(img_dir):
+            raise ValueError(f"Image directory not found: {img_dir}")
+        if not os.path.exists(mask_dir):
+            raise ValueError(f"Mask directory not found: {mask_dir}")
+
+        # 收集所有图像文件
+        img_extensions = ['*.png', '*.jpg', '*.jpeg', '*.bmp', '*.webp']
+        img_paths = []
+        for ext in img_extensions:
+            img_paths.extend(glob.glob(os.path.join(img_dir, ext)))
+
+        # 建立文件名到路径的映射 (去除后缀和常见后缀标记)
+        def get_base_name(path):
+            name = os.path.splitext(os.path.basename(path))[0]
+            # 移除常见的后缀标记如 _img, _mask
+            for suffix in ['_img', '_image', '_mask', '_label']:
+                if name.endswith(suffix):
+                    name = name[:-len(suffix)]
+            return name
+
+        img_map = {get_base_name(p): p for p in img_paths}
+
+        # 收集所有 mask 文件
+        mask_paths = []
+        for ext in img_extensions:
+            mask_paths.extend(glob.glob(os.path.join(mask_dir, ext)))
+
+        mask_map = {get_base_name(p): p for p in mask_paths}
+
+        # 匹配 image 和 mask
+        matched = 0
+        for base_name in img_map:
+            if base_name in mask_map:
+                self.samples.append((img_map[base_name], mask_map[base_name]))
+                matched += 1
+
+        print(f"[PairedFlatDataset] Found {len(img_paths)} images, {len(mask_paths)} masks")
+        print(f"[PairedFlatDataset] Matched {matched} pairs")
+
+        if matched == 0:
+            print(f"[Warning] No matched pairs! Check file naming convention.")
+            print(f"  Image names: {list(img_map.keys())[:5]}")
+            print(f"  Mask names: {list(mask_map.keys())[:5]}")
+
+    def __len__(self):
+        return len(self.samples)
+
+    def __getitem__(self, idx):
+        img_path, mask_path = self.samples[idx]
+
+        img = Image.open(img_path).convert('RGB')
+        mask = Image.open(mask_path).convert('L')
+
+        if self.transform is not None:
+            img, mask = self.transform(img, mask)
+
+        filename = os.path.splitext(os.path.basename(img_path))[0]
+
+        return (img, mask), self.class_label, filename
