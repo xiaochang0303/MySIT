@@ -4,17 +4,20 @@
 """
 Sample new images from a pre-trained SiT.
 """
+import sys
+import os
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
 import torch
 torch.backends.cuda.matmul.allow_tf32 = True
 torch.backends.cudnn.allow_tf32 = True
 from torchvision.utils import save_image
 from diffusers.models import AutoencoderKL
-from download import find_model
+from utils import find_model
 from models import SiT_models
-from train_utils import parse_ode_args, parse_sde_args, parse_transport_args
+from training.train_utils import parse_ode_args, parse_sde_args, parse_transport_args
 from transport import create_transport, Sampler
 import argparse
-import sys
 from time import time
 
 

@@ -9,7 +9,7 @@
 
 Usage:
     from lightweight_controlnet import LightweightControlSiT
-    from models import SiT_models
+    from .models import SiT_models
     
     # 加载预训练基座
     base = SiT_models["SiT-XL/2"](...)
@@ -32,7 +32,7 @@ try:
 except ImportError:
     raise ImportError("LightweightControlSiT requires timm; please install timm.")
 
-from models import SiT
+from .models import SiT
 
 
 class LowRankProjection(nn.Module):

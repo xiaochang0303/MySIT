@@ -7,7 +7,7 @@ try:
 except Exception as e:
     raise ImportError("ControlSiT requires timm PatchEmbed; please install timm.") from e
 
-from models import SiT
+from .models import SiT
 
 class Zero(nn.Module):
     """

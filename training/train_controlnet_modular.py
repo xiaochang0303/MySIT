@@ -1,5 +1,7 @@
-# IMG_1527.jpg
+import sys
 import os
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
 import argparse
 import logging
 import inspect
@@ -20,16 +22,14 @@ from torchvision.utils import make_grid, save_image
 from torchvision.datasets import ImageFolder
 from torchvision import transforms
 
-from models import SiT_models
-from controlnet import ControlSiT
-from lightweight_controlnet import LightweightControlSiT
-from lora import inject_lora, get_lora_parameters, count_lora_parameters
-from download import find_model
+from models import SiT_models, ControlSiT, LightweightControlSiT
+from models import inject_lora, get_lora_parameters, count_lora_parameters
+from utils import find_model
+import utils.wandb_utils as wandb_utils
 from diffusers.models import AutoencoderKL
 from transport import create_transport, Sampler
-from train_utils import parse_transport_args
-from maskdataset import PairedLayeredDataset, PairedTransform
-import wandb_utils
+from training.train_utils import parse_transport_args
+from datasets import PairedLayeredDataset, PairedTransform
 
 # speed flags
 torch.backends.cuda.matmul.allow_tf32 = True

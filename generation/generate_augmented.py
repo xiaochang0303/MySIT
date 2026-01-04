@@ -11,6 +11,9 @@ Usage:
         --output-dir augmented_data \
         --samples-per-mask 20
 """
+import sys
+import os
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import torch
 import argparse
@@ -22,11 +25,11 @@ from torchvision.utils import save_image
 from diffusers.models import AutoencoderKL
 
 # 本地模块
-from models import SiT_models
-from lightweight_controlnet import LightweightControlSiT
-from lora import inject_lora, load_lora_weights
+from models import SiT_models, LightweightControlSiT
+from models import inject_lora
+from models.lora import load_lora_weights
 from transport import create_transport
-from diverse_sampler import DiverseSampler, DiversityConfig, generate_augmented_dataset
+from generation.diverse_sampler import DiverseSampler, DiversityConfig, generate_augmented_dataset
 
 
 def load_model(args, device):

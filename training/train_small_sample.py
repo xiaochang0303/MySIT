@@ -6,24 +6,27 @@
 Usage:
     # 单 GPU 训练
     python train_small_sample.py --data-path /path/to/dataset --base-ckpt pretrained.pt
-    
+
     # 多 GPU 训练
     torchrun --nproc_per_node=2 train_small_sample.py --data-path /path/to/dataset
 """
+import sys
+import os
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import torch
 import torch.nn as nn
 from torch.utils.data import DataLoader
 import argparse
-import os
 from pathlib import Path
 
 # 本地模块
-from models import SiT_models
-from lightweight_controlnet import LightweightControlSiT, count_parameters
-from lora import inject_lora, save_lora_weights, load_lora_weights, count_lora_parameters
+from models import SiT_models, LightweightControlSiT
+from models.lightweight_controlnet import count_parameters
+from models import inject_lora, count_lora_parameters
+from models.lora import save_lora_weights, load_lora_weights
 from transport import create_transport
-from maskdataset import PairedLayeredDataset, PairedTransform
+from datasets import PairedLayeredDataset, PairedTransform
 
 
 def create_model(args):

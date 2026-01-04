@@ -1,4 +1,7 @@
+import sys
 import os
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
 import argparse
 import logging
 import glob
@@ -7,7 +10,7 @@ from collections import OrderedDict
 
 import numpy as np
 from PIL import Image
-from download import find_model
+from utils import find_model
 import torch
 import torch.distributed as dist
 from torch.utils.data import DataLoader, Dataset
@@ -16,12 +19,11 @@ from torchvision.datasets import ImageFolder
 from torchvision import transforms
 from torchvision.utils import make_grid, save_image
 
-from models import SiT_models
-from controlnet import ControlSiT
+from models import SiT_models, ControlSiT
 from diffusers.models import AutoencoderKL
 from transport import create_transport, Sampler
-from train_utils import parse_transport_args
-from maskdataset import PairedTransform, PairedLayeredDataset, ImageWithCanny, center_crop_arr
+from training.train_utils import parse_transport_args
+from datasets import PairedTransform, PairedLayeredDataset, ImageWithCanny, center_crop_arr
 # speed flags
 torch.backends.cuda.matmul.allow_tf32 = True
 torch.backends.cudnn.allow_tf32 = True

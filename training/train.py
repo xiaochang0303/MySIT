@@ -4,6 +4,10 @@
 """
 A minimal training script for SiT using PyTorch DDP.
 """
+import sys
+import os
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
 import torch
 # the first flag below was False when we tested this script but True makes A100 training a lot faster:
 torch.backends.cuda.matmul.allow_tf32 = True
@@ -22,14 +26,13 @@ from glob import glob
 from time import time
 import argparse
 import logging
-import os
 
 from models import SiT_models
-from download import find_model
+from utils import find_model
+import utils.wandb_utils as wandb_utils
 from transport import create_transport, Sampler
 from diffusers.models import AutoencoderKL
-from train_utils import parse_transport_args
-import wandb_utils
+from training.train_utils import parse_transport_args
 
 
 #################################################################################
