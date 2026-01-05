@@ -22,7 +22,7 @@ from torchvision.utils import make_grid, save_image
 from torchvision.datasets import ImageFolder
 from torchvision import transforms
 
-from models import SiT_models, ControlSiT, LightweightControlSiT
+from models import SiT_models, ControlSiT, MediumControlSiT, LightweightControlSiT
 from models import inject_lora, get_lora_parameters, count_lora_parameters
 from utils import find_model
 import utils.wandb_utils as wandb_utils
@@ -174,6 +174,15 @@ def apply_lora_if_requested(base, control_model, args, logger):
 def build_control_model(args, base, logger):
     if args.control_type == "controlnet":
         control_model = ControlSiT(base, freeze_base=not args.unfreeze_base, cfg_channels=args.cfg_channels)
+    elif args.control_type == "medium":
+        control_model = MediumControlSiT(
+            base,
+            bottleneck_ratio=args.medium_bottleneck_ratio,
+            group_size=args.medium_group_size,
+            freeze_base=not args.unfreeze_base,
+            noise_scale=args.medium_noise_scale,
+            cfg_channels=args.cfg_channels,
+        )
     elif args.control_type == "lightweight":
         control_model = LightweightControlSiT(
             base,
@@ -453,7 +462,7 @@ if __name__ == '__main__':
 
     # Control and LoRA options
     parser.add_argument("--ckpt", type=str, default=None, help="Path to pretrained SiT checkpoint (.pt)")
-    parser.add_argument("--control-type", type=str, choices=["controlnet", "lightweight", "none"], default="controlnet")
+    parser.add_argument("--control-type", type=str, choices=["controlnet", "medium", "lightweight", "none"], default="controlnet")
     parser.add_argument("--control-strength", type=float, default=1.0)
     parser.add_argument("--lr", type=float, default=1e-4)
     parser.add_argument("--unfreeze-base", action="store_true", help="Whether to unfreeze the base SiT model.")
@@ -464,6 +473,14 @@ if __name__ == '__main__':
     parser.add_argument("--light-rank", type=int, default=32)
     parser.add_argument("--light-shared-depth", type=int, default=4)
     parser.add_argument("--light-noise-scale", type=float, default=0.0)
+
+    # Medium ControlNet options
+    parser.add_argument("--medium-bottleneck-ratio", type=float, default=0.5,
+                        help="Bottleneck dimension ratio for MediumControlSiT (default: 0.5)")
+    parser.add_argument("--medium-group-size", type=int, default=2,
+                        help="Group size for MediumControlSiT (default: 2)")
+    parser.add_argument("--medium-noise-scale", type=float, default=0.0,
+                        help="Noise scale for MediumControlSiT during training")
 
     # CFG options
     parser.add_argument("--cfg-channels", type=str, choices=["first3", "all"], default="first3",

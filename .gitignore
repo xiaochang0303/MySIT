@@ -16,8 +16,9 @@ sd-vae-ft-mse/
 Data/
 data/
 sample_data/
+gen_data/
 
-# Documentation (not needed for reproduction)
+# Documentation (AI-generated docs not needed for reproduction)
 CLAUDE.md
 CODE_REVIEW.md
 docs/
